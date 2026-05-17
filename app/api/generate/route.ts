@@ -1,29 +1,40 @@
-import OpenAI from 'openai';
-import { NextRequest, NextResponse } from 'next/server';
+import OpenAI from "openai";
+import { NextRequest, NextResponse } from "next/server";
 
 function analyzeText(text: string) {
   const words = text.trim().split(/\s+/).filter(Boolean);
-  const sentences = text.split(/[.!?]+/).map(s => s.trim()).filter(Boolean);
+  const sentences = text
+    .split(/[.!?]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
 
-  const sentenceLengths = sentences.map(s => s.split(/\s+/).length);
+  const sentenceLengths = sentences.map(
+    (s) => s.split(/\s+/).filter(Boolean).length
+  );
+
   const avgSentenceLength =
-    sentenceLengths.reduce((a, b) => a + b, 0) / Math.max(sentenceLengths.length, 1);
-
-  const variance =
-    sentenceLengths.reduce((sum, len) => sum + Math.pow(len - avgSentenceLength, 2), 0) /
+    sentenceLengths.reduce((a, b) => a + b, 0) /
     Math.max(sentenceLengths.length, 1);
 
-  const uniqueWords = new Set(words.map(w => w.toLowerCase())).size;
+  const variance =
+    sentenceLengths.reduce(
+      (sum, len) => sum + Math.pow(len - avgSentenceLength, 2),
+      0
+    ) / Math.max(sentenceLengths.length, 1);
+
+  const uniqueWords = new Set(words.map((w) => w.toLowerCase())).size;
   const lexicalDiversity = uniqueWords / Math.max(words.length, 1);
 
-  // Heuristic only (not a real detector)
+  // Heuristic AI score
   let aiScore = 50;
+
   if (lexicalDiversity > 0.45) aiScore -= 10;
   if (variance > 40) aiScore -= 10;
   if (avgSentenceLength > 14 && avgSentenceLength < 28) aiScore -= 5;
+
   aiScore = Math.max(5, Math.min(95, Math.round(aiScore)));
 
-  // Heuristic originality estimate based on lexical diversity
+  // Heuristic originality estimate
   let originalityScore = Math.round(lexicalDiversity * 100);
   originalityScore = Math.max(50, Math.min(98, originalityScore));
 
@@ -32,18 +43,18 @@ function analyzeText(text: string) {
       score: aiScore,
       label:
         aiScore < 30
-          ? 'Low AI-like pattern'
+          ? "Low AI-like pattern"
           : aiScore < 60
-          ? 'Mixed pattern'
-          : 'More formulaic pattern',
+          ? "Mixed pattern"
+          : "More formulaic pattern",
       note:
-        'This is a heuristic writing analysis, not a definitive AI detector.',
+        "This is a heuristic writing analysis, not a definitive AI detector.",
     },
     similarity: {
       score: 100 - originalityScore,
       originalityScore,
       note:
-        'This is an originality estimate based on writing diversity, not a Turnitin-style plagiarism check.',
+        "This is an originality estimate based on writing diversity, not a Turnitin-style plagiarism check.",
     },
   };
 }
@@ -51,19 +62,22 @@ function analyzeText(text: string) {
 export async function POST(req: NextRequest) {
   try {
     const apiKey = process.env.GROQ_API_KEY;
+
     if (!apiKey) {
       return NextResponse.json(
-        { error: 'GROQ_API_KEY environment variable is missing.' },
+        { error: "GROQ_API_KEY environment variable is missing." },
         { status: 500 }
       );
     }
 
     const client = new OpenAI({
       apiKey,
-      baseURL: 'https://api.groq.com/openai/v1',
+      baseURL: "https://api.groq.com/openai/v1",
     });
 
-    const { question, rules } = await req.json();
+    const body = await req.json();
+    const question = body.question || "";
+    const rules = body.rules || "";
 
     const prompt = `
 Write a complete academic assignment answer in formal third-person language.
@@ -85,33 +99,41 @@ Formatting Requirements:
 - Subheadings: suitable for Calibri 14 pt, bold, dark green.
 - Body text: suitable for Calibri 11 pt, black.
 
-Quality Standards:
-- Demonstrate critical thinking and application to the specific case.
-- Ensure strong coherence between paragraphs.
-- Use concise, precise academic language.
-- Avoid overuse of predictable transition phrases.
-- Meet the required word count if provided.
-
 Assignment Question:
 ${question}
 
 Instructions and Marking Criteria:
 ${rules}
-`;`;
+`;
 
     const response = await client.chat.completions.create({
-      model: 'llama-3.3-70b-versatile',
-      messages: [{ role: 'user', content: prompt }],
+      model: "llama-3.3-70b-versatile",
+      messages: [
+        {
+          role: "user",
+          content: prompt,
+        },
+      ],
       temperature: 0.35,
     });
 
-    const answer = response.choices[0]?.message?.content || 'No response.';
+    const answer =
+      response.choices?.[0]?.message?.content || "No response.";
+
     const report = analyzeText(answer);
 
-    return NextResponse.json({ answer, report });
-  } catch (error: any) {
+    return NextResponse.json({
+      answer,
+      report,
+    });
+  } catch (error: unknown) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Failed to generate answer.";
+
     return NextResponse.json(
-      { error: error.message || 'Failed to generate answer.' },
+      { error: message },
       { status: 500 }
     );
   }
